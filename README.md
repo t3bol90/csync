@@ -1,7 +1,13 @@
 # csync 🚀
 
 A modern Python wrapper for rsync to sync code between local and remote machines.
-
+## QUICK START
+```bash
+# install
+uv pip install git+https://github.com/anhvth/csync
+# run
+csync --help
+```
 ## Features
 
 - 🎨 **Modern CLI** - Built with Typer and Rich for beautiful, colorful output
