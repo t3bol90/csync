@@ -19,6 +19,7 @@ class RsyncWrapper:
     def __init__(self, config: CsyncConfig):
         self.config = config
         (Path.home() / ".csync").mkdir(exist_ok=True)
+        self._base_cmd: list[str] = self._build_base_cmd()
 
     def _ssh_control_args(self) -> list[str]:
         """Return rsync -e args that enable SSH ControlMaster connection reuse."""
@@ -32,23 +33,21 @@ class RsyncWrapper:
             ssh_cmd += f" -p {self.config.ssh_port}"
         return ["-e", ssh_cmd]
 
+    def _build_base_cmd(self) -> list[str]:
+        """Pre-build the static command prefix shared across all rsync invocations."""
+        cmd = ["rsync"] + list(self.config.rsync_options or [])
+        for pat in (self.config.exclude_patterns or []):
+            cmd.extend(["--exclude", pat])
+        if self.config.remote_host:
+            cmd.extend(self._ssh_control_args())
+        return cmd
+
     def _build_rsync_command(
         self, source: str, destination: str, dry_run: bool = False
     ) -> List[str]:
-        cmd = ["rsync"] + (
-            self.config.rsync_options.copy() if self.config.rsync_options else []
-        )
-
+        cmd = list(self._base_cmd)  # shallow copy of cached prefix
         if dry_run:
             cmd.append("--dry-run")
-
-        if self.config.exclude_patterns:
-            for pattern in self.config.exclude_patterns:
-                cmd.extend(["--exclude", pattern])
-
-        if self.config.remote_host:
-            cmd.extend(self._ssh_control_args())
-
         cmd.extend([source, destination])
         return cmd
 

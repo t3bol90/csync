@@ -401,3 +401,39 @@ class TestRemoteTarget:
 
         cmd = mock_run.call_args[0][0]
         assert cmd[-2] == "deploy@prod.example.com:/var/app/"
+
+
+
+# ---------------------------------------------------------------------------
+# _base_cmd caching
+# ---------------------------------------------------------------------------
+
+import unittest
+
+class TestBaseCmdCache(unittest.TestCase):
+    """Tests for the cached _base_cmd prefix introduced in RsyncWrapper.__init__."""
+
+    def setUp(self):
+        config = make_config(
+            rsync_options=["-a"],
+            exclude_patterns=["*.log"],
+            ssh_port=None,
+        )
+        self.wrapper = RsyncWrapper(config)
+
+    def test_build_rsync_command_matches_original_behaviour(self):
+        """_build_rsync_command result must contain options, excludes, ssh args, src, dest."""
+        cmd = self.wrapper._build_rsync_command("/src/", "user@host:/dst/")
+        self.assertIn("rsync", cmd)
+        self.assertIn("/src/", cmd)
+        self.assertIn("user@host:/dst/", cmd)
+        # src before dest
+        self.assertLess(cmd.index("/src/"), cmd.index("user@host:/dst/"))
+
+    def test_mutation_of_result_does_not_affect_base_cmd(self):
+        """Mutating the returned list must not corrupt the cached _base_cmd."""
+        cmd1 = self.wrapper._build_rsync_command("/src/", "user@host:/dst/")
+        before = list(self.wrapper._base_cmd)
+        cmd1.append("--injected")
+        after = list(self.wrapper._base_cmd)
+        self.assertEqual(before, after)
