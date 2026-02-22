@@ -342,11 +342,11 @@ class CsyncDaemon:
         self.perform_sync()
 
         if detach:
-            # Redirect output to log file so threads can keep printing without
-            # hitting I/O errors on a closed stdout (which would crash sync_loop).
-            log_dir = Path.home() / '.csync'
+            # Redirect output to a per-project log file so multiple daemons
+            # don't intermix output and users can tail a specific project.
+            log_dir = Path.home() / '.csync' / 'daemons'
             log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = open(log_dir / 'daemon.log', 'a')
+            log_file = open(log_dir / f'{self.signature}.log', 'a')
             sys.stdout = log_file
             sys.stderr = log_file
             self.console = Console(file=log_file, stderr=False)
