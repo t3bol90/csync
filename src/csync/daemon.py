@@ -75,6 +75,7 @@ class CsyncDaemon:
         self.sync_count = 0
         self.sync_lock = threading.Lock()
         self._perform_sync_lock = threading.Lock()
+        self._change_event = threading.Event()
 
         # Configuration — sync_delay can be overridden in ~/.config/csync/config.cfg
         from .config import load_global_defaults as _load_gd
@@ -143,6 +144,7 @@ class CsyncDaemon:
             if not self.pending_changes:
                 self.first_change_at = time.time()
             self.pending_changes.add(path)
+            self._change_event.set()
 
     def get_pending_changes(self) -> Set[Path]:
         """Get and clear pending changes."""
@@ -235,15 +237,16 @@ class CsyncDaemon:
         """Main sync loop running in background thread."""
         while self.is_running:
             try:
+                # Block until a change arrives or max_sync_interval elapses
+                self._change_event.wait(timeout=self.max_sync_interval)
+                self._change_event.clear()
+
                 if self.should_sync_now():
                     self.perform_sync()
 
-                # Sleep for a short interval
-                time.sleep(1.0)
-
             except Exception as e:
                 self.console.print(f"❌ Daemon error: {e}", style="red")
-                time.sleep(5.0)  # Wait longer on error
+                time.sleep(5.0)
 
     def _check_ssh_connectivity(self) -> bool:
         """Verify SSH access to the remote host before starting the daemon."""
