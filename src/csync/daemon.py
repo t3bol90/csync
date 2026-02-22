@@ -56,7 +56,13 @@ class CsyncDaemon:
     def __init__(self, config: CsyncConfig, console: Optional[Console] = None):
         self.config = config
         self.console = console or Console()
-        self.rsync_wrapper = RsyncWrapper(config)
+        # Strip noisy options so daemon log stays readable
+        from dataclasses import replace as _dc_replace
+        _quiet_opts = [
+            o for o in (config.rsync_options or [])
+            if o not in ('-v', '--verbose', '--progress')
+        ]
+        self.rsync_wrapper = RsyncWrapper(_dc_replace(config, rsync_options=_quiet_opts))
         self.process_manager = ProcessManager(console)
         self.local_path = Path(self.config.local_path).resolve()
 
