@@ -74,6 +74,7 @@ class CsyncDaemon:
         self.first_change_at: float = 0.0
         self.sync_count = 0
         self.sync_lock = threading.Lock()
+        self._perform_sync_lock = threading.Lock()
 
         # Configuration
         self.sync_delay = 5.0  # Wait 5 seconds after last change before syncing
@@ -164,6 +165,8 @@ class CsyncDaemon:
 
     def perform_sync(self) -> bool:
         """Perform synchronization."""
+        if not self._perform_sync_lock.acquire(blocking=False):
+            return False  # Another sync is already running
         try:
             # Get pending changes
             changes = self.get_pending_changes()
@@ -212,6 +215,8 @@ class CsyncDaemon:
         except Exception as e:
             self.console.print(f"❌ Sync error: {e}", style="red")
             return False
+        finally:
+            self._perform_sync_lock.release()
 
     def sync_loop(self) -> None:
         """Main sync loop running in background thread."""
