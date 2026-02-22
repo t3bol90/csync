@@ -7,6 +7,7 @@ import subprocess
 import sys
 import os
 import time
+from pathlib import Path
 from typing import List, Optional
 
 from .config import CsyncConfig
@@ -17,6 +18,19 @@ class RsyncWrapper:
 
     def __init__(self, config: CsyncConfig):
         self.config = config
+        (Path.home() / ".csync").mkdir(exist_ok=True)
+
+    def _ssh_control_args(self) -> list[str]:
+        """Return rsync -e args that enable SSH ControlMaster connection reuse."""
+        control_path = Path.home() / ".csync" / "ssh-%r@%h:%p"
+        ssh_cmd = (
+            f"ssh -o ControlMaster=auto"
+            f" -o ControlPath={control_path}"
+            f" -o ControlPersist=60"
+        )
+        if self.config.ssh_port:
+            ssh_cmd += f" -p {self.config.ssh_port}"
+        return ["-e", ssh_cmd]
 
     def _build_rsync_command(
         self, source: str, destination: str, dry_run: bool = False
@@ -32,8 +46,8 @@ class RsyncWrapper:
             for pattern in self.config.exclude_patterns:
                 cmd.extend(["--exclude", pattern])
 
-        if self.config.ssh_port:
-            cmd.extend(["-e", f"ssh -p {self.config.ssh_port}"])
+        if self.config.remote_host:
+            cmd.extend(self._ssh_control_args())
 
         cmd.extend([source, destination])
         return cmd
