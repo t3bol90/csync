@@ -205,14 +205,9 @@ class CsyncDaemon:
 
             # Perform the actual sync
             if changes and len(changes) < self.batch_size:
-                # Targeted sync — only transfer the changed files
-                import tempfile, os as _os
+                # Targeted sync — pipe changed file paths via stdin, no temp file needed
                 rel_paths = [self._relative_path(p) for p in changes]
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-                    f.write('\n'.join(rel_paths))
-                    files_from = f.name
-                success = self.rsync_wrapper.push(files_from=files_from)
-                _os.unlink(files_from)
+                success = self.rsync_wrapper.push(files_from_paths=rel_paths)
             else:
                 success = self.rsync_wrapper.push(dry_run=False, verbose=False)
 

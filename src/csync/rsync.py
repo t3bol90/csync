@@ -38,13 +38,13 @@ class RsyncWrapper:
         cmd.extend([source, destination])
         return cmd
 
-    def _run_with_retry(self, cmd: List[str], verbose: bool) -> bool:
+    def _run_with_retry(self, cmd: List[str], verbose: bool, stdin_data: Optional[bytes] = None) -> bool:
         """Run a command, retrying up to 3 times with exponential backoff."""
         max_retries = 3
         delay = 2.0
         for attempt in range(max_retries + 1):
             try:
-                subprocess.run(cmd, check=True, capture_output=False)
+                subprocess.run(cmd, check=True, capture_output=False, input=stdin_data)
                 return True
             except subprocess.CalledProcessError as e:
                 if attempt == max_retries:
@@ -68,21 +68,23 @@ class RsyncWrapper:
                 return False
         return False
 
-    def push(self, dry_run: bool = False, verbose: bool = True, files_from: Optional[str] = None) -> bool:
+    def push(self, dry_run: bool = False, verbose: bool = True, files_from_paths: Optional[List[str]] = None) -> bool:
         """Push (sync) local files to remote."""
         source = self.config.local_path
         destination = self.config.remote_target
 
         cmd = self._build_rsync_command(source, destination, dry_run)
 
-        if files_from is not None:
-            # Insert --files-from before the source path (last two elements are source and destination)
-            cmd.insert(len(cmd) - 2, f"--files-from={files_from}")
+        stdin_data: Optional[bytes] = None
+        if files_from_paths is not None:
+            # Insert --files-from=- before the source/dest args; paths arrive via stdin
+            cmd.insert(len(cmd) - 2, "--files-from=-")
+            stdin_data = '\n'.join(files_from_paths).encode()
 
         if verbose:
             print(f"Executing: {' '.join(cmd)}")
 
-        success = self._run_with_retry(cmd, verbose)
+        success = self._run_with_retry(cmd, verbose, stdin_data=stdin_data)
         if success and verbose:
             print("✅ Push completed successfully!")
         return success
