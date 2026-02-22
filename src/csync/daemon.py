@@ -232,6 +232,22 @@ class CsyncDaemon:
                 self.console.print(f"❌ Daemon error: {e}", style="red")
                 time.sleep(5.0)  # Wait longer on error
 
+    def _check_ssh_connectivity(self) -> bool:
+        """Verify SSH access to the remote host before starting the daemon."""
+        host = self.config.remote_host
+        user = self.config.ssh_user
+        target = f"{user}@{host}" if user else host
+        ssh_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
+        if self.config.ssh_port:
+            ssh_cmd.extend(["-p", str(self.config.ssh_port)])
+        ssh_cmd.extend([target, "exit"])
+        try:
+            import subprocess as _sp
+            result = _sp.run(ssh_cmd, capture_output=True, timeout=10)
+            return result.returncode == 0
+        except Exception:
+            return False
+
     def start(self, detach: bool = True) -> bool:
         """
         Start the daemon.
@@ -247,6 +263,16 @@ class CsyncDaemon:
         if existing:
             self.console.print(
                 f"❌ Daemon already running for {self.local_path} (PID: {existing.pid})",
+                style="red",
+            )
+            return False
+
+        # Verify SSH connectivity early so users get a clear error
+        self.console.print("🔌 Checking SSH connectivity...", style="dim")
+        if not self._check_ssh_connectivity():
+            self.console.print(
+                f"❌ Cannot reach {self.config.remote_target} via SSH. "
+                "Check your config and network.",
                 style="red",
             )
             return False
