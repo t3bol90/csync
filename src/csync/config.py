@@ -34,10 +34,18 @@ def load_global_defaults() -> Dict[str, Any]:
         if value:
             defaults[key] = value
 
-    ssh_port = section.get('ssh_port')
-    if ssh_port:
+    for int_key in ('ssh_port',):
+        raw = section.get(int_key)
+        if raw:
+            try:
+                defaults[int_key] = int(raw)
+            except ValueError:
+                pass
+
+    sync_delay = section.get('sync_delay')
+    if sync_delay:
         try:
-            defaults['ssh_port'] = int(ssh_port)
+            defaults['sync_delay'] = float(sync_delay)
         except ValueError:
             pass
 

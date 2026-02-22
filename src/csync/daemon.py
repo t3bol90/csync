@@ -76,8 +76,9 @@ class CsyncDaemon:
         self.sync_lock = threading.Lock()
         self._perform_sync_lock = threading.Lock()
 
-        # Configuration
-        self.sync_delay = 5.0  # Wait 5 seconds after last change before syncing
+        # Configuration — sync_delay can be overridden in ~/.config/csync/config.cfg
+        from .config import load_global_defaults as _load_gd
+        self.sync_delay = float(_load_gd().get('sync_delay', 5.0))
         self.max_sync_interval = 300.0  # Force sync every 5 minutes
         self.batch_size = 100  # Max files to sync in one batch
 

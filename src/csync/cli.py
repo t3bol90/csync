@@ -321,6 +321,10 @@ def configure(
     ssh_port: Annotated[
         Optional[int], typer.Option("--ssh-port", help="Default SSH port")
     ] = None,
+    sync_delay: Annotated[
+        Optional[float],
+        typer.Option("--sync-delay", help="Seconds to wait after first change before syncing (default 5.0)"),
+    ] = None,
     show: Annotated[
         bool, typer.Option("--show", "-s", help="Show current global defaults")
     ] = False,
@@ -334,7 +338,7 @@ def configure(
 
     current = load_global_defaults()
 
-    if show or not any([remote_host, ssh_user, remote_path, ssh_port]):
+    if show or not any([remote_host, ssh_user, remote_path, ssh_port, sync_delay]):
         if not current:
             console.print(
                 f"No global defaults set. Config file: [cyan]{GLOBAL_CONFIG_FILE}[/cyan]",
@@ -360,6 +364,7 @@ def configure(
             'ssh_user': ssh_user,
             'remote_path': remote_path,
             'ssh_port': ssh_port,
+            'sync_delay': sync_delay,
         }.items() if v is not None
     }
 
