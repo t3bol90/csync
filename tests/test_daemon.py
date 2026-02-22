@@ -303,3 +303,36 @@ class TestCheckSshConnectivity:
         target = cmd[-2]  # second-to-last arg before "exit"
         assert "@" not in target
         assert "host.example.com" in target
+
+
+# ===========================================================================
+# CsyncDaemon.perform_sync() tests
+# ===========================================================================
+
+class TestCsyncDaemon:
+    """Tests for CsyncDaemon.perform_sync()."""
+
+    def setup_method(self):
+        self.daemon = make_daemon()
+
+    def test_last_sync_duration_ms_set_after_success(self):
+        """last_sync_duration_ms is updated after a successful sync."""
+        self.daemon.last_sync_duration_ms = 0.0
+        mock_wrapper = MagicMock()
+        mock_wrapper.push.return_value = True
+        self.daemon.rsync_wrapper = mock_wrapper
+        self.daemon.add_pending_change("/tmp/test/file.txt")
+        result = self.daemon.perform_sync()
+        assert result is True
+        assert self.daemon.last_sync_duration_ms >= 0.0
+
+    def test_last_sync_duration_ms_unchanged_after_failure(self):
+        """last_sync_duration_ms stays 0 after a failed sync."""
+        self.daemon.last_sync_duration_ms = 0.0
+        mock_wrapper = MagicMock()
+        mock_wrapper.push.return_value = False
+        self.daemon.rsync_wrapper = mock_wrapper
+        self.daemon.add_pending_change("/tmp/test/file.txt")
+        result = self.daemon.perform_sync()
+        assert result is False
+        assert self.daemon.last_sync_duration_ms == 0.0

@@ -77,6 +77,7 @@ class CsyncDaemon:
         self._perform_sync_lock = threading.Lock()
         self._change_event = threading.Event()
         self._force_full_sync: bool = False
+        self.last_sync_duration_ms: float = 0.0
 
         # Configuration — sync_delay can be overridden in ~/.config/csync/config.cfg
         from .config import load_global_defaults as _load_gd
@@ -204,16 +205,19 @@ class CsyncDaemon:
                 self.console.print("🔄 Performing scheduled sync...", style="blue")
 
             # Perform the actual sync
+            start = time.perf_counter()
             if changes and len(changes) < self.batch_size:
                 # Targeted sync — pipe changed file paths via stdin, no temp file needed
                 rel_paths = [self._relative_path(p) for p in changes]
                 success = self.rsync_wrapper.push(files_from_paths=rel_paths)
             else:
                 success = self.rsync_wrapper.push(dry_run=False, verbose=False)
+            duration_ms = (time.perf_counter() - start) * 1000
 
             if success:
                 self.sync_count += 1
                 self.last_sync_time = time.time()
+                self.last_sync_duration_ms = duration_ms
 
                 # Update daemon stats
                 self.process_manager.update_daemon_stats(
@@ -221,7 +225,10 @@ class CsyncDaemon:
                 )
 
                 self._force_full_sync = False
-                self.console.print("✅ Sync completed successfully", style="green")
+                if changes and len(changes) < self.batch_size:
+                    self.console.print(f"✅ Sync completed in {duration_ms:.0f}ms", style="green")
+                else:
+                    self.console.print(f"✅ Full sync completed in {duration_ms:.0f}ms", style="green")
             else:
                 # Re-queue failed changes for the next attempt
                 if changes:
