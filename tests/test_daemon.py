@@ -85,6 +85,47 @@ class TestCsyncFileHandler:
         assert len(daemon.pending_changes) == 0
 
 
+    def test_deleted_event_not_queued(self):
+        """DELETED events must not be added to pending changes (no --delete flag)."""
+        from unittest.mock import MagicMock
+        event = MagicMock()
+        event.is_directory = False
+        event.event_type = "deleted"
+        event.src_path = "/tmp/test_local/file.txt"
+        daemon = make_daemon()
+        handler = CsyncFileHandler(daemon)
+        handler.on_any_event(event)
+        assert len(daemon.pending_changes) == 0
+
+    def test_moved_event_queues_dest_path(self):
+        """MOVED events must queue the destination path, not the source."""
+        from unittest.mock import MagicMock
+        event = MagicMock()
+        event.is_directory = False
+        event.event_type = "moved"
+        event.src_path = b"/tmp/test_local/old.txt"
+        event.dest_path = b"/tmp/test_local/new.txt"
+        daemon = make_daemon()
+        handler = CsyncFileHandler(daemon)
+        handler.on_any_event(event)
+        queued = daemon.pending_changes
+        dest = daemon._coerce_path("/tmp/test_local/new.txt")
+        src = daemon._coerce_path("/tmp/test_local/old.txt")
+        assert dest in queued
+        assert src not in queued
+
+    def test_temp_patterns_are_skipped(self):
+        """Editor temp files must not be added to pending changes."""
+        temp_files = ["file.swp", "file.swo", "file~", ".#file.txt", "4913"]
+        daemon = make_daemon()
+        for name in temp_files:
+            daemon.pending_changes.clear()
+            daemon.add_pending_change(f"/tmp/test_local/{name}")
+            assert len(daemon.pending_changes) == 0, (
+                f"Expected {name} to be skipped but it was queued"
+            )
+
+
 # ===========================================================================
 # CsyncDaemon.should_exclude_file() tests
 # ===========================================================================

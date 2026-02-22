@@ -22,6 +22,8 @@ from .process_manager import DaemonInfo, ProcessManager
 
 RawPath = Union[str, bytes, PathLike[str]]
 
+_TEMP_PATTERNS = ("*.swp", "*.swo", "*~", ".#*", "4913")
+
 
 class CsyncFileHandler(FileSystemEventHandler):
     """File system event handler for csync daemon."""
@@ -34,8 +36,19 @@ class CsyncFileHandler(FileSystemEventHandler):
         if event.is_directory:
             return
 
+        event_type = event.event_type
+
+        # Deleted files cannot be synced without --delete; skip them
+        if event_type == "deleted":
+            return
+
         src_path = os.fsdecode(event.src_path)
         normalized_path = self.daemon._coerce_path(src_path)
+
+        # For move/rename events, sync the destination (new name), not the source
+        if event_type == "moved" and hasattr(event, "dest_path"):
+            dest_raw = os.fsdecode(event.dest_path)
+            normalized_path = self.daemon._coerce_path(dest_raw)
 
         # Skip excluded files
         if self.daemon.should_exclude_file(normalized_path):
@@ -45,7 +58,6 @@ class CsyncFileHandler(FileSystemEventHandler):
         self.daemon.add_pending_change(normalized_path)
 
         # Log the event
-        event_type = event.event_type
         rel_path = self.daemon._relative_path(normalized_path)
         self.daemon.console.print(f"📝 {event_type}: {rel_path}", style="dim")
 
@@ -142,6 +154,9 @@ class CsyncDaemon:
     def add_pending_change(self, file_path: RawPath) -> None:
         """Add a file to pending changes."""
         path = self._coerce_path(file_path)
+        # Skip editor temporary files (vim/emacs atomic write artifacts)
+        if any(fnmatch.fnmatch(path.name, pat) for pat in _TEMP_PATTERNS):
+            return
         with self.sync_lock:
             if not self.pending_changes:
                 self.first_change_at = time.time()
