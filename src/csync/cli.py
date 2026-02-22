@@ -2,7 +2,9 @@
 Modern command-line interface for csync using Typer and Rich.
 """
 
+import hashlib
 import os
+from pathlib import Path
 from typing import Optional, Annotated
 
 import typer
@@ -490,6 +492,54 @@ def daemon_status() -> None:
     except ImportError:
         console.print("❌ Daemon functionality not available", style="red")
         raise typer.Exit(1)
+
+
+@app.command()
+def logs(
+    config: Annotated[
+        Optional[str], typer.Option("--config", "-c", help="Path to config file")
+    ] = None,
+    follow: Annotated[
+        bool, typer.Option("--follow", "-f", help="Follow log output (like tail -f)")
+    ] = False,
+) -> None:
+    """
+    📜 Show daemon log output for the current project.
+    """
+    import hashlib
+
+    config_obj = find_and_load_config(config)
+    abs_path = config_obj.local_path.rstrip("/")
+    signature = "csync-" + hashlib.md5(abs_path.encode()).hexdigest()[:12]
+
+    log_path = Path.home() / ".csync" / "daemons" / f"{signature}.log"
+    if not log_path.exists():
+        log_path = Path.home() / ".csync" / "daemon.log"
+    if not log_path.exists():
+        console.print("❌ No daemon log file found. Has a daemon been started?", style="red")
+        raise typer.Exit(1)
+
+    console.print(f"📜 Log file: [dim]{log_path}[/dim]")
+
+    if not follow:
+        lines = log_path.read_text().splitlines()
+        for line in lines[-50:]:
+            console.print(line)
+        return
+
+    console.print("Following log (Ctrl-C to stop)...", style="dim")
+    with open(log_path, "r") as f:
+        f.seek(0, 2)  # Seek to end
+        try:
+            while True:
+                line = f.readline()
+                if line:
+                    console.print(line, end="")
+                else:
+                    import time as _time
+                    _time.sleep(0.5)
+        except KeyboardInterrupt:
+            pass
 
 
 @app.command()
