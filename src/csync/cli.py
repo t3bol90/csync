@@ -10,7 +10,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from .config import CsyncConfig, find_config_file, create_gitignore_if_needed
+from .config import (
+    CsyncConfig,
+    find_config_file,
+    create_gitignore_if_needed,
+    load_global_defaults,
+    save_global_defaults,
+    GLOBAL_CONFIG_FILE,
+)
 from .rsync import RsyncWrapper
 from .analyzer import analyze_project_smart
 from .daemon import start_daemon
@@ -57,12 +64,15 @@ def find_and_load_config(config_path: Optional[str] = None) -> CsyncConfig:
                 "Create a .csync.cfg file with your sync configuration.", style="yellow"
             )
             console.print("\n[bold]Example:[/bold]")
+            gd = load_global_defaults()
+            example_host = gd.get("remote_host", "your-server.com")
+            example_user = gd.get("ssh_user", "your-username")
             example_panel = Panel(
-                """[cyan][csync][/cyan]
+                f"""[cyan][csync][/cyan]
 [yellow]local_path[/yellow] = .
-[yellow]remote_host[/yellow] = myserver.com
+[yellow]remote_host[/yellow] = {example_host}
 [yellow]remote_path[/yellow] = /home/user/myproject
-[yellow]ssh_user[/yellow] = user""",
+[yellow]ssh_user[/yellow] = {example_user}""",
                 title="Sample .csync.cfg",
                 border_style="blue",
             )
@@ -240,13 +250,14 @@ def init_config(
             console.print(f"⚠️ Smart analysis failed: {e}", style="yellow")
             console.print("Using default exclude patterns", style="yellow")
 
-    # Create sample configuration
+    # Merge global defaults so users don't have to retype them every project
+    gd = load_global_defaults()
     sample_config = CsyncConfig(
         local_path=".",
-        remote_host="your-server.com",
-        remote_path="/path/to/remote/directory",
-        ssh_user="your-username",
-        ssh_port=None,
+        remote_host=gd.get("remote_host", "your-server.com"),
+        remote_path=gd.get("remote_path", "/path/to/remote/directory"),
+        ssh_user=gd.get("ssh_user") or None,
+        ssh_port=gd.get("ssh_port"),
         rsync_options=["-av", "--progress"],
         exclude_patterns=default_excludes,
         respect_gitignore=True,
@@ -292,6 +303,69 @@ def init_config(
             with open(".gitignore", "a") as f:
                 f.write("\n# Ignore csync config file\n.csync.cfg\n")
             console.print("✅ Added .csync.cfg to .gitignore", style="green")
+
+
+@app.command()
+def configure(
+    remote_host: Annotated[
+        Optional[str], typer.Option("--remote-host", "-H", help="Default remote hostname")
+    ] = None,
+    ssh_user: Annotated[
+        Optional[str], typer.Option("--ssh-user", "-u", help="Default SSH username")
+    ] = None,
+    remote_path: Annotated[
+        Optional[str], typer.Option("--remote-path", "-p", help="Default remote path")
+    ] = None,
+    ssh_port: Annotated[
+        Optional[int], typer.Option("--ssh-port", help="Default SSH port")
+    ] = None,
+    show: Annotated[
+        bool, typer.Option("--show", "-s", help="Show current global defaults")
+    ] = False,
+) -> None:
+    """
+    ⚙️  Set or show global defaults stored in ~/.config/csync/config.cfg.
+
+    Values set here are used as defaults when running 'csync init'.
+    """
+    from rich.table import Table
+
+    current = load_global_defaults()
+
+    if show or not any([remote_host, ssh_user, remote_path, ssh_port]):
+        if not current:
+            console.print(
+                f"No global defaults set. Config file: [cyan]{GLOBAL_CONFIG_FILE}[/cyan]",
+                style="yellow",
+            )
+            console.print(
+                "Use options like [bold cyan]--remote-host[/bold cyan] to set defaults."
+            )
+            return
+
+        table = Table(title="⚙️  Global csync Defaults", header_style="bold blue")
+        table.add_column("Key", style="cyan")
+        table.add_column("Value", style="white")
+        for key, value in current.items():
+            table.add_row(key, str(value))
+        console.print(table)
+        console.print(f"\nConfig file: [dim]{GLOBAL_CONFIG_FILE}[/dim]")
+        return
+
+    updates = {
+        k: v for k, v in {
+            'remote_host': remote_host,
+            'ssh_user': ssh_user,
+            'remote_path': remote_path,
+            'ssh_port': ssh_port,
+        }.items() if v is not None
+    }
+
+    save_global_defaults(updates)
+    console.print("✅ Global defaults updated:", style="green")
+    for key, value in updates.items():
+        console.print(f"  [cyan]{key}[/cyan] = {value}")
+    console.print(f"\nSaved to [dim]{GLOBAL_CONFIG_FILE}[/dim]")
 
 
 @app.command()

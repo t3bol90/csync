@@ -28,7 +28,6 @@ class CsyncFileHandler(FileSystemEventHandler):
 
     def __init__(self, daemon: "CsyncDaemon"):
         self.daemon = daemon
-        self.console = daemon.console
 
     def on_any_event(self, event: FileSystemEvent) -> None:
         """Handle any file system event."""
@@ -48,7 +47,7 @@ class CsyncFileHandler(FileSystemEventHandler):
         # Log the event
         event_type = event.event_type
         rel_path = self.daemon._relative_path(normalized_path)
-        self.console.print(f"📝 {event_type}: {rel_path}", style="dim")
+        self.daemon.console.print(f"📝 {event_type}: {rel_path}", style="dim")
 
 
 class CsyncDaemon:
@@ -305,9 +304,15 @@ class CsyncDaemon:
         self.perform_sync()
 
         if detach:
-            # Redirect output for daemon
-            sys.stdout.close()
-            sys.stderr.close()
+            # Redirect output to log file so threads can keep printing without
+            # hitting I/O errors on a closed stdout (which would crash sync_loop).
+            log_dir = Path.home() / '.csync'
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = open(log_dir / 'daemon.log', 'a')
+            sys.stdout = log_file
+            sys.stderr = log_file
+            self.console = Console(file=log_file, stderr=False)
+            self.process_manager.console = self.console
 
             # Keep daemon running
             try:

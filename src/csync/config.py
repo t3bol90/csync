@@ -8,8 +8,59 @@ import json
 import yaml
 import configparser
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
+
+GLOBAL_CONFIG_DIR = Path.home() / '.config' / 'csync'
+GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / 'config.cfg'
+
+
+def load_global_defaults() -> Dict[str, Any]:
+    """Load user-level defaults from ~/.config/csync/config.cfg."""
+    if not GLOBAL_CONFIG_FILE.exists():
+        return {}
+
+    parser = configparser.ConfigParser()
+    parser.read(GLOBAL_CONFIG_FILE)
+
+    if 'defaults' not in parser:
+        return {}
+
+    section = parser['defaults']
+    defaults: Dict[str, Any] = {}
+
+    for key in ('remote_host', 'ssh_user', 'remote_path'):
+        value = section.get(key)
+        if value:
+            defaults[key] = value
+
+    ssh_port = section.get('ssh_port')
+    if ssh_port:
+        try:
+            defaults['ssh_port'] = int(ssh_port)
+        except ValueError:
+            pass
+
+    return defaults
+
+
+def save_global_defaults(defaults: Dict[str, Any]) -> None:
+    """Save user-level defaults to ~/.config/csync/config.cfg."""
+    GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    parser = configparser.ConfigParser()
+    if GLOBAL_CONFIG_FILE.exists():
+        parser.read(GLOBAL_CONFIG_FILE)
+
+    if 'defaults' not in parser:
+        parser.add_section('defaults')
+
+    for key, value in defaults.items():
+        if value is not None:
+            parser.set('defaults', key, str(value))
+
+    with open(GLOBAL_CONFIG_FILE, 'w') as f:
+        parser.write(f)
 
 
 @dataclass
