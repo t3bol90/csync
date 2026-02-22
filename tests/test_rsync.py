@@ -87,21 +87,28 @@ class TestBuildRsyncCommand:
             assert pattern in exclude_values
 
     def test_ssh_port_adds_e_flag(self):
-        """-e "ssh -p <port>" is appended when ssh_port is set."""
+        """-e ssh includes ControlMaster options and -p <port> when ssh_port is set."""
         config = make_config(ssh_port=2222)
         wrapper = RsyncWrapper(config)
         cmd = wrapper._build_rsync_command("/src/", "/dst/")
 
         assert "-e" in cmd
         e_index = cmd.index("-e")
-        assert cmd[e_index + 1] == "ssh -p 2222"
+        ssh_arg = cmd[e_index + 1]
+        assert "ControlMaster=auto" in ssh_arg
+        assert "-p 2222" in ssh_arg
 
     def test_no_ssh_port_no_e_flag(self):
-        """No -e flag when ssh_port is None."""
+        """ControlMaster -e flag is present for any remote host; no -p when ssh_port is None."""
         config = make_config(ssh_port=None)
         wrapper = RsyncWrapper(config)
         cmd = wrapper._build_rsync_command("/src/", "/dst/")
-        assert "-e" not in cmd
+
+        assert "-e" in cmd
+        e_index = cmd.index("-e")
+        ssh_arg = cmd[e_index + 1]
+        assert "ControlMaster=auto" in ssh_arg
+        assert "-p " not in ssh_arg
 
     def test_source_before_destination(self):
         """Source always comes directly before destination at the end of cmd."""
