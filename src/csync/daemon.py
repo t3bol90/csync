@@ -22,7 +22,14 @@ from .process_manager import DaemonInfo, ProcessManager
 
 RawPath = Union[str, bytes, PathLike[str]]
 
-_TEMP_PATTERNS = ("*.swp", "*.swo", "*~", ".#*", "4913")
+_TEMP_PATTERNS = (
+    # vim / emacs atomic-write temporaries
+    "*.swp", "*.swo", "*.swpx", "*~", ".#*", "4913",
+    # lock and pid files — transient, often disappear before rsync runs
+    "*.lock", "*.pid",
+    # LibreOffice / office suite temp
+    ".~lock.*",
+)
 
 # Adaptive debounce thresholds: (inclusive_max_count, delay_seconds)
 # For counts above the last entry, sync_delay (configured, default 5 s) is used.
@@ -143,10 +150,16 @@ class CsyncDaemon:
             normalized_pattern = pattern.replace("\\", "/")
 
             if normalized_pattern.endswith("/"):
-                # Directory pattern: match the directory itself or any path inside it.
-                # Use exact boundary check to avoid ".git/" matching ".gitignore".
+                # Directory pattern: match at root OR anywhere in the path tree.
+                # Prefix with "/" for boundary detection to avoid ".git/" matching ".gitignore".
                 dir_name = normalized_pattern.rstrip("/")
-                if rel_path == dir_name or rel_path.startswith(dir_name + "/"):
+                path_with_sep = "/" + rel_path
+                if (
+                    rel_path == dir_name
+                    or rel_path.startswith(dir_name + "/")
+                    or ("/" + dir_name + "/") in path_with_sep
+                    or path_with_sep.endswith("/" + dir_name)
+                ):
                     return True
             elif "*" in normalized_pattern:
                 # Wildcard pattern
@@ -267,14 +280,27 @@ class CsyncDaemon:
                 else:
                     self.console.print(f"✅ Full sync completed in {duration_ms:.0f}ms", style="green")
             else:
-                # Re-queue failed changes for the next attempt
+                # Re-queue failed changes for the next attempt,
+                # but only those that still exist — gone files caused exit 23 and
+                # re-queuing them creates an infinite retry loop.
                 if changes:
+                    existing = {p for p in changes if p.exists()}
+                    gone = changes - existing
+                    if gone:
+                        self.console.print(
+                            f"⚠️  Skipping {len(gone)} file(s) that no longer exist",
+                            style="yellow",
+                        )
                     with self.sync_lock:
-                        self.pending_changes.update(changes)
+                        self.pending_changes.update(existing)
+                        if existing and not self.first_change_at:
+                            # Mark when we re-queued so adaptive delay applies on retry
+                            self.first_change_at = time.monotonic()
                         if len(self.pending_changes) > self.batch_size:
                             # Too many accumulated failures — drop specifics and
                             # force a full sync next time instead
                             self.pending_changes.clear()
+                            self.first_change_at = 0.0
                             self._force_full_sync = True
                 self.console.print("❌ Sync failed", style="red")
 

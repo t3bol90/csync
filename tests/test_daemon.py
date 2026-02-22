@@ -195,6 +195,36 @@ class TestShouldExcludeFile:
         assert daemon.should_exclude_file("/tmp/test_local/.DS_Store") is False
 
 
+    def test_excludes_nested_git_dir(self):
+        """Files inside a nested .git/ directory (e.g. submodule) must be excluded."""
+        daemon = self._daemon()
+        # Nested submodule: codebase/ml-lineas/.git/objects/maintenance.lock
+        assert daemon.should_exclude_file(
+            "/tmp/test_local/codebase/ml-lineas/.git/objects/maintenance.lock"
+        ) is True
+
+    def test_excludes_nested_git_dir_itself(self):
+        """The nested .git directory itself must be excluded."""
+        daemon = self._daemon()
+        assert daemon.should_exclude_file(
+            "/tmp/test_local/codebase/ml-lineas/.git"
+        ) is True
+
+    def test_does_not_exclude_gitignore_nested(self):
+        """A .gitignore in a subdirectory must NOT be excluded by .git/ pattern."""
+        daemon = self._daemon()
+        assert daemon.should_exclude_file(
+            "/tmp/test_local/codebase/.gitignore"
+        ) is False
+
+    def test_does_not_exclude_github_nested(self):
+        """.github/ inside a subdirectory must NOT be excluded by .git/ pattern."""
+        daemon = self._daemon()
+        assert daemon.should_exclude_file(
+            "/tmp/test_local/codebase/.github/workflows/ci.yml"
+        ) is False
+
+
 # ===========================================================================
 # CsyncDaemon.add_pending_change() / get_pending_changes() tests
 # ===========================================================================
@@ -515,3 +545,63 @@ class TestCsyncDaemon:
         result = self.daemon.perform_sync()
         assert result is False
         assert self.daemon.last_sync_duration_ms == 0.0
+
+
+# ===========================================================================
+# _TEMP_PATTERNS lock/pid coverage
+# ===========================================================================
+
+class TestTempPatterns:
+    """Tests that transient system files are filtered by _TEMP_PATTERNS."""
+
+    def test_lock_files_are_skipped(self):
+        """*.lock files must not be queued — they disappear before rsync runs."""
+        daemon = make_daemon()
+        for name in ["maintenance.lock", "index.lock", "MERGE_HEAD.lock"]:
+            daemon.pending_changes.clear()
+            daemon.add_pending_change(f"/tmp/test_local/{name}")
+            assert len(daemon.pending_changes) == 0, f"{name} should be skipped"
+
+    def test_pid_files_are_skipped(self):
+        """*.pid files must not be queued."""
+        daemon = make_daemon()
+        daemon.add_pending_change("/tmp/test_local/app.pid")
+        assert len(daemon.pending_changes) == 0
+
+    def test_libreoffice_lock_is_skipped(self):
+        """.~lock.* files must not be queued."""
+        daemon = make_daemon()
+        daemon.add_pending_change("/tmp/test_local/.~lock.document.odt#")
+        assert len(daemon.pending_changes) == 0
+
+    def test_swpx_is_skipped(self):
+        """*.swpx (vim) must not be queued."""
+        daemon = make_daemon()
+        daemon.add_pending_change("/tmp/test_local/file.swpx")
+        assert len(daemon.pending_changes) == 0
+
+
+# ===========================================================================
+# CsyncDaemon.perform_sync() re-queue behaviour
+# ===========================================================================
+
+class TestPerformSyncRequeue:
+    """Tests for re-queue logic after a failed sync."""
+
+    def test_requeue_skips_nonexistent_files(self):
+        """Re-queue after failure must not include files that no longer exist."""
+        daemon = make_daemon()
+        # Simulate a change that was queued but file is now gone
+        phantom = Path("/tmp/test_local/this_file_definitely_does_not_exist_xyz_12345.txt")
+        assert not phantom.exists(), "phantom file must not exist for this test"
+        daemon.pending_changes.add(phantom)
+        daemon.first_change_at = time.monotonic()
+
+        mock_wrapper = MagicMock()
+        mock_wrapper.push.return_value = False  # rsync fails
+        daemon.rsync_wrapper = mock_wrapper
+
+        daemon.perform_sync()
+
+        # phantom does not exist → must NOT be re-queued
+        assert phantom not in daemon.pending_changes

@@ -437,3 +437,49 @@ class TestBaseCmdCache(unittest.TestCase):
         cmd1.append("--injected")
         after = list(self.wrapper._base_cmd)
         self.assertEqual(before, after)
+
+
+# ---------------------------------------------------------------------------
+# _run_with_retry partial_ok / exit-23 behaviour
+# ---------------------------------------------------------------------------
+
+class TestRunWithRetryPartialOk(unittest.TestCase):
+    """Tests for _run_with_retry partial_ok parameter and exit-23 handling."""
+
+    def setUp(self):
+        config = make_config(rsync_options=["-a"], exclude_patterns=[], ssh_port=None)
+        self.wrapper = RsyncWrapper(config)
+
+    def test_exit_23_with_partial_ok_returns_true(self):
+        """Exit code 23 with partial_ok=True must return True without retrying."""
+        error = subprocess.CalledProcessError(23, ["rsync"])
+        with patch("subprocess.run", side_effect=error) as mock_run:
+            result = self.wrapper._run_with_retry(["rsync", "src", "dst"], verbose=False, partial_ok=True)
+        assert result is True
+        assert mock_run.call_count == 1  # no retries
+
+    def test_exit_23_without_partial_ok_retries_and_fails(self):
+        """Exit code 23 with partial_ok=False must retry and eventually return False."""
+        error = subprocess.CalledProcessError(23, ["rsync"])
+        with patch("subprocess.run", side_effect=error) as mock_run:
+            with patch("time.sleep"):  # don't actually sleep
+                result = self.wrapper._run_with_retry(["rsync", "src", "dst"], verbose=False, partial_ok=False)
+        assert result is False
+        assert mock_run.call_count == 4  # 1 initial + 3 retries
+
+    def test_push_targeted_uses_partial_ok(self):
+        """push() with files_from_paths must pass partial_ok=True to _run_with_retry."""
+        with patch.object(self.wrapper, "_run_with_retry", return_value=True) as mock_retry:
+            self.wrapper.push(files_from_paths=["file.txt"])
+        args, kwargs = mock_retry.call_args
+        # partial_ok should be True for targeted sync
+        partial_ok = kwargs.get("partial_ok", args[3] if len(args) > 3 else False)
+        assert partial_ok is True
+
+    def test_push_full_does_not_use_partial_ok(self):
+        """push() without files_from_paths must pass partial_ok=False."""
+        with patch.object(self.wrapper, "_run_with_retry", return_value=True) as mock_retry:
+            self.wrapper.push()
+        args, kwargs = mock_retry.call_args
+        partial_ok = kwargs.get("partial_ok", args[3] if len(args) > 3 else False)
+        assert partial_ok is False

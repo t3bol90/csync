@@ -51,7 +51,7 @@ class RsyncWrapper:
         cmd.extend([source, destination])
         return cmd
 
-    def _run_with_retry(self, cmd: List[str], verbose: bool, stdin_data: Optional[bytes] = None) -> bool:
+    def _run_with_retry(self, cmd: List[str], verbose: bool, stdin_data: Optional[bytes] = None, partial_ok: bool = False) -> bool:
         """Run a command, retrying up to 3 times with exponential backoff."""
         max_retries = 3
         delay = 2.0
@@ -60,6 +60,15 @@ class RsyncWrapper:
                 subprocess.run(cmd, check=True, capture_output=False, input=stdin_data)
                 return True
             except subprocess.CalledProcessError as e:
+                if partial_ok and e.returncode == 23:
+                    # Exit 23 = partial transfer: some targeted files disappeared
+                    # before rsync ran. Not a real error — don't retry.
+                    print(
+                        "⚠️  rsync partial transfer (exit 23): some files may have"
+                        " disappeared before sync; treating as success.",
+                        file=sys.stderr,
+                    )
+                    return True
                 if attempt == max_retries:
                     print(
                         f"❌ Command failed after {max_retries} retries"
@@ -97,7 +106,7 @@ class RsyncWrapper:
         if verbose:
             print(f"Executing: {' '.join(cmd)}")
 
-        success = self._run_with_retry(cmd, verbose, stdin_data=stdin_data)
+        success = self._run_with_retry(cmd, verbose, stdin_data=stdin_data, partial_ok=(files_from_paths is not None))
         if success and verbose:
             print("✅ Push completed successfully!")
         return success
