@@ -24,6 +24,15 @@ RawPath = Union[str, bytes, PathLike[str]]
 
 _TEMP_PATTERNS = ("*.swp", "*.swo", "*~", ".#*", "4913")
 
+# Adaptive debounce thresholds: (inclusive_max_count, delay_seconds)
+# For counts above the last entry, sync_delay (configured, default 5 s) is used.
+_DEBOUNCE_THRESHOLDS: tuple[tuple[int, float], ...] = (
+    (1, 0.1),   # single file — near real-time (~100 ms)
+    (5, 0.3),   # few files — still fast
+    (20, 1.0),  # small burst
+    (50, 2.0),  # medium burst
+)
+
 
 class CsyncFileHandler(FileSystemEventHandler):
     """File system event handler for csync daemon."""
@@ -83,6 +92,7 @@ class CsyncDaemon:
         self.is_running = False
         self.pending_changes: Set[Path] = set()
         self.last_sync_time = 0.0
+        self._last_sync_mono: float = 0.0  # monotonic clock mirror of last_sync_time for timing
         self.first_change_at: float = 0.0
         self.sync_count = 0
         self.sync_lock = threading.Lock()
@@ -159,7 +169,7 @@ class CsyncDaemon:
             return
         with self.sync_lock:
             if not self.pending_changes:
-                self.first_change_at = time.time()
+                self.first_change_at = time.monotonic()   # was time.time()
             self.pending_changes.add(path)
             self._change_event.set()
 
@@ -177,29 +187,24 @@ class CsyncDaemon:
             count = len(self.pending_changes)
         if count == 0:
             return self.sync_delay
-        if count == 1:
-            return 0.1   # single file — near real-time (~100ms)
-        if count <= 5:
-            return 0.3   # few files — still fast
-        if count <= 20:
-            return 1.0   # small burst
-        if count <= 50:
-            return 2.0   # medium burst
-        return self.sync_delay  # large flood — use configured value (default 5s)
+        for max_count, delay in _DEBOUNCE_THRESHOLDS:
+            if count <= max_count:
+                return delay
+        return self.sync_delay  # large flood — use configured value (default 5 s)
 
     def should_sync_now(self) -> bool:
         """Determine if we should sync now based on timing and changes."""
         if self._force_full_sync:
             return True
 
-        current_time = time.time()
+        now = time.monotonic()
 
         # Force sync if max interval exceeded
-        if current_time - self.last_sync_time > self.max_sync_interval:
+        if now - self._last_sync_mono > self.max_sync_interval:
             return True
 
         # Sync once the adaptive delay has elapsed since the FIRST pending change
-        if self.first_change_at and current_time - self.first_change_at > self._adaptive_delay():
+        if self.first_change_at and now - self.first_change_at > self._adaptive_delay():
             return True
 
         return False
@@ -248,6 +253,7 @@ class CsyncDaemon:
             if success:
                 self.sync_count += 1
                 self.last_sync_time = time.time()
+                self._last_sync_mono = time.monotonic()
                 self.last_sync_duration_ms = duration_ms
 
                 # Update daemon stats
@@ -284,8 +290,18 @@ class CsyncDaemon:
         """Main sync loop running in background thread."""
         while self.is_running:
             try:
-                # Block until a change arrives or max_sync_interval elapses
-                self._change_event.wait(timeout=self.max_sync_interval)
+                # Compute how long to sleep: remaining debounce window or max interval.
+                # This ensures a single-file change syncs after ~100 ms, not 300 s.
+                with self.sync_lock:
+                    first = self.first_change_at
+
+                if first:
+                    remaining = self._adaptive_delay() - (time.monotonic() - first)
+                    wait_timeout = max(0.0, remaining)
+                else:
+                    wait_timeout = self.max_sync_interval
+
+                self._change_event.wait(timeout=wait_timeout)
                 self._change_event.clear()
 
                 if self.should_sync_now():

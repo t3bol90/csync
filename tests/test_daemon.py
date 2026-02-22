@@ -207,9 +207,9 @@ class TestPendingChanges:
         daemon = make_daemon()
         assert daemon.first_change_at == 0.0
 
-        before = time.time()
+        before = time.monotonic()
         daemon.add_pending_change("/tmp/test_local/file.txt")
-        after = time.time()
+        after = time.monotonic()
 
         assert daemon.first_change_at != 0.0
         assert before <= daemon.first_change_at <= after
@@ -256,40 +256,40 @@ class TestShouldSyncNow:
     """Tests for the should_sync_now() method."""
 
     def test_returns_true_when_max_interval_exceeded(self):
-        """Should return True when last_sync_time is far in the past."""
+        """Should return True when _last_sync_mono is far in the past."""
         daemon = make_daemon()
-        # Push last_sync_time well beyond max_sync_interval (300 s)
-        daemon.last_sync_time = time.time() - 400.0
+        # Push _last_sync_mono well beyond max_sync_interval (300 s)
+        daemon._last_sync_mono = time.monotonic() - 400.0
         assert daemon.should_sync_now() is True
 
     def test_returns_false_with_no_pending_changes_and_recent_sync(self):
         """Should return False when there are no pending changes and sync is recent."""
         daemon = make_daemon()
-        daemon.last_sync_time = time.time()  # just synced
-        daemon.first_change_at = 0.0         # no pending changes
+        daemon._last_sync_mono = time.monotonic()  # just synced
+        daemon.first_change_at = 0.0               # no pending changes
         assert daemon.should_sync_now() is False
 
     def test_returns_true_when_delay_elapsed_after_first_change(self):
         """Should return True when sync_delay has elapsed since first_change_at."""
         daemon = make_daemon()
         daemon.sync_delay = 5.0
-        daemon.last_sync_time = time.time()   # recent sync (won't trigger max interval)
-        daemon.first_change_at = time.time() - 10.0  # 10 s ago, delay is 5 s
+        daemon._last_sync_mono = time.monotonic()          # recent sync
+        daemon.first_change_at = time.monotonic() - 10.0  # 10 s ago, delay is 5 s
         assert daemon.should_sync_now() is True
 
     def test_returns_false_when_delay_not_elapsed(self):
         """Should return False when sync_delay has NOT yet elapsed since first_change_at."""
         daemon = make_daemon()
         daemon.sync_delay = 5.0
-        daemon.last_sync_time = time.time()   # recent sync
-        daemon.first_change_at = time.time() - 1.0  # only 1 s ago, delay is 5 s
+        daemon._last_sync_mono = time.monotonic()         # recent sync
+        daemon.first_change_at = time.monotonic() - 1.0  # only 1 s ago, delay is 5 s
         assert daemon.should_sync_now() is False
 
     def test_returns_false_when_no_first_change_at(self):
         """Should return False when first_change_at is 0.0 and max interval not reached."""
         daemon = make_daemon()
-        daemon.last_sync_time = time.time()   # recent sync
-        daemon.first_change_at = 0.0          # no queued change
+        daemon._last_sync_mono = time.monotonic()  # recent sync
+        daemon.first_change_at = 0.0              # no queued change
         assert daemon.should_sync_now() is False
 
 
@@ -393,6 +393,95 @@ class TestCheckSshConnectivity:
         target = cmd[-2]  # second-to-last arg before "exit"
         assert "@" not in target
         assert "host.example.com" in target
+
+
+
+# ===========================================================================
+# CsyncDaemon._adaptive_delay() boundary tests
+# ===========================================================================
+
+class TestAdaptiveDelayBoundaries:
+    """Exact boundary tests for _adaptive_delay() thresholds."""
+
+    def test_all_threshold_boundaries(self):
+        """Verify exact delay at every threshold boundary (count: 0,1,2,5,6,20,21,50,51)."""
+        daemon = make_daemon()
+        cases = [
+            (0,  daemon.sync_delay),  # no changes → configured delay
+            (1,  0.1),
+            (2,  0.3),
+            (5,  0.3),
+            (6,  1.0),
+            (20, 1.0),
+            (21, 2.0),
+            (50, 2.0),
+            (51, daemon.sync_delay),  # large flood → configured delay
+        ]
+        for count, expected in cases:
+            daemon.pending_changes = {
+                Path(f"/tmp/test_local/f{i}.txt") for i in range(count)
+            }
+            got = daemon._adaptive_delay()
+            assert got == expected, (
+                f"count={count}: expected delay={expected}, got={got}"
+            )
+
+
+# ===========================================================================
+# sync_loop timeout tests
+# ===========================================================================
+
+class TestSyncLoopTimeout:
+    """sync_loop must sleep for the remaining adaptive delay, not max_sync_interval."""
+
+    def test_sync_loop_uses_remaining_delay_for_pending_change(self):
+        """With 1 pending change, wait timeout must be ~0.1 s, not max_sync_interval."""
+        daemon = make_daemon()
+        daemon.is_running = True
+
+        # Simulate a file event that just arrived
+        daemon.pending_changes.add(Path("/tmp/test_local/file.txt"))
+        daemon.first_change_at = time.monotonic()  # just now
+
+        captured_timeouts = []
+
+        def mock_wait(timeout):
+            captured_timeouts.append(timeout)
+            daemon.is_running = False  # stop after one iteration
+            return False
+
+        with patch.object(daemon._change_event, "wait", side_effect=mock_wait):
+            with patch.object(daemon, "should_sync_now", return_value=False):
+                daemon.sync_loop()
+
+        assert len(captured_timeouts) == 1
+        # Remaining time should be close to 0.1 s (adaptive delay for 1 file)
+        # and definitely not max_sync_interval (300 s)
+        assert captured_timeouts[0] < 1.0, (
+            f"Expected timeout < 1s but got {captured_timeouts[0]:.3f}s "
+            "(sync_loop is not using adaptive delay remaining time)"
+        )
+
+    def test_sync_loop_uses_max_interval_when_no_pending_changes(self):
+        """With no pending changes, wait timeout must be max_sync_interval."""
+        daemon = make_daemon()
+        daemon.is_running = True
+        daemon.pending_changes.clear()
+        daemon.first_change_at = 0.0
+
+        captured_timeouts = []
+
+        def mock_wait(timeout):
+            captured_timeouts.append(timeout)
+            daemon.is_running = False
+            return False
+
+        with patch.object(daemon._change_event, "wait", side_effect=mock_wait):
+            with patch.object(daemon, "should_sync_now", return_value=False):
+                daemon.sync_loop()
+
+        assert len(captured_timeouts) == 1
+        assert captured_timeouts[0] == daemon.max_sync_interval
 
 
 # ===========================================================================
