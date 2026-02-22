@@ -10,4 +10,7 @@ wheels/
 
 # Ignore csync config file
 .csync.cfg
+
+# Claude
 .claude/
+CLAUDE.md
