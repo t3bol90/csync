@@ -171,6 +171,22 @@ class CsyncDaemon:
             self.first_change_at = 0.0
             return changes
 
+    def _adaptive_delay(self) -> float:
+        """Return debounce delay scaled to the number of pending changes."""
+        with self.sync_lock:
+            count = len(self.pending_changes)
+        if count == 0:
+            return self.sync_delay
+        if count == 1:
+            return 0.1   # single file — near real-time (~100ms)
+        if count <= 5:
+            return 0.3   # few files — still fast
+        if count <= 20:
+            return 1.0   # small burst
+        if count <= 50:
+            return 2.0   # medium burst
+        return self.sync_delay  # large flood — use configured value (default 5s)
+
     def should_sync_now(self) -> bool:
         """Determine if we should sync now based on timing and changes."""
         if self._force_full_sync:
@@ -182,8 +198,8 @@ class CsyncDaemon:
         if current_time - self.last_sync_time > self.max_sync_interval:
             return True
 
-        # Sync once the delay has elapsed since the FIRST pending change
-        if self.first_change_at and current_time - self.first_change_at > self.sync_delay:
+        # Sync once the adaptive delay has elapsed since the FIRST pending change
+        if self.first_change_at and current_time - self.first_change_at > self._adaptive_delay():
             return True
 
         return False

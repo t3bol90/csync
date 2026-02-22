@@ -293,6 +293,55 @@ class TestShouldSyncNow:
         assert daemon.should_sync_now() is False
 
 
+
+# ===========================================================================
+# CsyncDaemon._adaptive_delay() tests
+# ===========================================================================
+
+class TestAdaptiveDelay:
+    """Tests for the _adaptive_delay() method."""
+
+    def test_adaptive_delay_no_changes(self):
+        """No pending changes → sync_delay (default)."""
+        daemon = make_daemon()
+        daemon.pending_changes.clear()
+        assert daemon._adaptive_delay() == daemon.sync_delay
+
+    def test_adaptive_delay_single_file(self):
+        """Single pending change → 100ms delay."""
+        daemon = make_daemon()
+        daemon.add_pending_change("/tmp/test_local/a.txt")
+        assert daemon._adaptive_delay() == 0.1
+
+    def test_adaptive_delay_few_files(self):
+        """2-5 pending changes → 300ms delay."""
+        daemon = make_daemon()
+        for i in range(3):
+            daemon.pending_changes.add(Path(f"/tmp/test_local/f{i}.txt"))
+        assert daemon._adaptive_delay() == 0.3
+
+    def test_adaptive_delay_small_burst(self):
+        """6-20 pending changes → 1.0s delay."""
+        daemon = make_daemon()
+        for i in range(10):
+            daemon.pending_changes.add(Path(f"/tmp/test_local/f{i}.txt"))
+        assert daemon._adaptive_delay() == 1.0
+
+    def test_adaptive_delay_medium_burst(self):
+        """21-50 pending changes → 2.0s delay."""
+        daemon = make_daemon()
+        for i in range(30):
+            daemon.pending_changes.add(Path(f"/tmp/test_local/f{i}.txt"))
+        assert daemon._adaptive_delay() == 2.0
+
+    def test_adaptive_delay_large_flood(self):
+        """51+ pending changes → sync_delay (default 5s)."""
+        daemon = make_daemon()
+        for i in range(60):
+            daemon.pending_changes.add(Path(f"/tmp/test_local/f{i}.txt"))
+        assert daemon._adaptive_delay() == daemon.sync_delay
+
+
 # ===========================================================================
 # CsyncDaemon._check_ssh_connectivity() tests
 # ===========================================================================
