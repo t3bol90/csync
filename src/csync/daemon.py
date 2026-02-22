@@ -71,6 +71,7 @@ class CsyncDaemon:
         self.is_running = False
         self.pending_changes: Set[Path] = set()
         self.last_sync_time = 0.0
+        self.first_change_at: float = 0.0
         self.sync_count = 0
         self.sync_lock = threading.Lock()
 
@@ -135,6 +136,8 @@ class CsyncDaemon:
         """Add a file to pending changes."""
         path = self._coerce_path(file_path)
         with self.sync_lock:
+            if not self.pending_changes:
+                self.first_change_at = time.time()
             self.pending_changes.add(path)
 
     def get_pending_changes(self) -> Set[Path]:
@@ -142,6 +145,7 @@ class CsyncDaemon:
         with self.sync_lock:
             changes = self.pending_changes.copy()
             self.pending_changes.clear()
+            self.first_change_at = 0.0
             return changes
 
     def should_sync_now(self) -> bool:
@@ -152,11 +156,8 @@ class CsyncDaemon:
         if current_time - self.last_sync_time > self.max_sync_interval:
             return True
 
-        # Sync if we have pending changes and delay has passed
-        if (
-            self.pending_changes
-            and current_time - self.last_sync_time > self.sync_delay
-        ):
+        # Sync once the delay has elapsed since the FIRST pending change
+        if self.first_change_at and current_time - self.first_change_at > self.sync_delay:
             return True
 
         return False
