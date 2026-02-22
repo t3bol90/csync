@@ -76,6 +76,7 @@ class CsyncDaemon:
         self.sync_lock = threading.Lock()
         self._perform_sync_lock = threading.Lock()
         self._change_event = threading.Event()
+        self._force_full_sync: bool = False
 
         # Configuration — sync_delay can be overridden in ~/.config/csync/config.cfg
         from .config import load_global_defaults as _load_gd
@@ -156,6 +157,9 @@ class CsyncDaemon:
 
     def should_sync_now(self) -> bool:
         """Determine if we should sync now based on timing and changes."""
+        if self._force_full_sync:
+            return True
+
         current_time = time.time()
 
         # Force sync if max interval exceeded
@@ -221,8 +225,18 @@ class CsyncDaemon:
                     str(self.local_path), self.last_sync_time, self.sync_count
                 )
 
+                self._force_full_sync = False
                 self.console.print("✅ Sync completed successfully", style="green")
             else:
+                # Re-queue failed changes for the next attempt
+                if changes:
+                    with self.sync_lock:
+                        self.pending_changes.update(changes)
+                        if len(self.pending_changes) > self.batch_size:
+                            # Too many accumulated failures — drop specifics and
+                            # force a full sync next time instead
+                            self.pending_changes.clear()
+                            self._force_full_sync = True
                 self.console.print("❌ Sync failed", style="red")
 
             return success
