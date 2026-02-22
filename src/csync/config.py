@@ -144,19 +144,14 @@ class CsyncConfig:
                 continue
 
             gitignore_path = Path(dirpath) / '.gitignore'
+            prefix = '' if str(rel_dir) == '.' else rel_dir.as_posix() + '/'
             try:
                 with open(gitignore_path, 'r') as f:
                     for line in f:
                         line = line.strip()
                         if not line or line.startswith('#'):
                             continue
-                        # Prefix pattern with its relative directory so it is
-                        # valid when matched from the project root.
-                        if rel_dir == Path('.'):
-                            patterns.append(line)
-                        else:
-                            prefix = rel_dir.as_posix() + '/'
-                            patterns.append(prefix + line)
+                        patterns.append(prefix + line)
             except Exception:
                 pass
 
@@ -392,3 +387,53 @@ def find_config_file(start_path: str = ".") -> Optional[str]:
         current_path = current_path.parent
 
     return None
+
+
+# Global configuration file path (used for user-level defaults)
+GLOBAL_CONFIG_FILE = Path.home() / ".config" / "csync" / "defaults.cfg"
+
+
+def load_global_defaults() -> dict:
+    """
+    Load global default configuration values.
+
+    Returns:
+        dict with default key/value pairs, or empty dict if file does not exist.
+    """
+    if not GLOBAL_CONFIG_FILE.exists():
+        return {}
+
+    config = configparser.ConfigParser()
+    config.read(GLOBAL_CONFIG_FILE)
+
+    if "defaults" not in config:
+        return {}
+
+    section = config["defaults"]
+    result = {}
+    for key, value in section.items():
+        if key == "sync_delay":
+            result[key] = float(value)
+        elif key == "ssh_port":
+            result[key] = int(value)
+        else:
+            result[key] = value
+    return result
+
+
+def save_global_defaults(data: dict) -> None:
+    """
+    Save global default configuration values.
+
+    Args:
+        data: dict of default key/value pairs to persist.
+    """
+    GLOBAL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    config = configparser.ConfigParser()
+    config.add_section("defaults")
+    for key, value in data.items():
+        config.set("defaults", key, str(value))
+
+    with open(GLOBAL_CONFIG_FILE, "w") as f:
+        config.write(f)
