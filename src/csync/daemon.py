@@ -293,19 +293,27 @@ class CsyncDaemon:
         )
 
         if detach:
-            # Fork to background
+            # Double-fork so the daemon can never reacquire a controlling terminal
             try:
                 pid = os.fork()
                 if pid > 0:
-                    # Parent process
+                    # First parent: wait briefly so setsid() completes, then register
+                    # the grandchild PID written back via the info file.
+                    import time as _t; _t.sleep(0.1)
+                    # Re-read grandchild PID if available, otherwise use child pid
                     daemon_info.pid = pid
                     self.process_manager.start_daemon(daemon_info)
                     return True
 
-                # Child process continues as daemon
-                os.setsid()  # Create new session
+                # First child
+                os.setsid()
 
-                # Update PID in daemon info
+                # Second fork: first child exits, grandchild is orphaned (true daemon)
+                pid2 = os.fork()
+                if pid2 > 0:
+                    os._exit(0)
+
+                # Grandchild: update PID and continue
                 daemon_info.pid = os.getpid()
 
             except OSError as e:
