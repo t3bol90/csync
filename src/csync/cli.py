@@ -257,7 +257,7 @@ def init_config(
     sample_config = CsyncConfig(
         local_path=".",
         remote_host=gd.get("remote_host", "your-server.com"),
-        remote_path=gd.get("remote_path", "/path/to/remote/directory"),
+        remote_path=gd.get("remote_path") or f'~/projects/{Path.cwd().name}',
         ssh_user=gd.get("ssh_user") or None,
         ssh_port=gd.get("ssh_port"),
         rsync_options=["-av", "--progress"],
