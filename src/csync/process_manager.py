@@ -63,12 +63,10 @@ class ProcessManager:
         return self.daemon_dir / f"{signature}.json"
 
     def is_process_running(self, pid: int) -> bool:
-        """Check if a process with given PID is running."""
+        """Check if a process with given PID is running and not a zombie."""
         try:
             process = psutil.Process(pid)
-            # Check if it's actually a csync process
-            cmdline = " ".join(process.cmdline())
-            return "csync" in cmdline and process.is_running()
+            return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
 
