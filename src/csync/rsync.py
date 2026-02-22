@@ -7,7 +7,7 @@ import subprocess
 import sys
 import os
 import time
-from typing import List
+from typing import List, Optional
 
 from .config import CsyncConfig
 
@@ -68,12 +68,16 @@ class RsyncWrapper:
                 return False
         return False
 
-    def push(self, dry_run: bool = False, verbose: bool = True) -> bool:
+    def push(self, dry_run: bool = False, verbose: bool = True, files_from: Optional[str] = None) -> bool:
         """Push (sync) local files to remote."""
         source = self.config.local_path
         destination = self.config.remote_target
 
         cmd = self._build_rsync_command(source, destination, dry_run)
+
+        if files_from is not None:
+            # Insert --files-from before the source path (last two elements are source and destination)
+            cmd.insert(len(cmd) - 2, f"--files-from={files_from}")
 
         if verbose:
             print(f"Executing: {' '.join(cmd)}")

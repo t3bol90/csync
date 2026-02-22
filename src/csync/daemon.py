@@ -198,7 +198,17 @@ class CsyncDaemon:
                 self.console.print("🔄 Performing scheduled sync...", style="blue")
 
             # Perform the actual sync
-            success = self.rsync_wrapper.push(dry_run=False, verbose=False)
+            if changes and len(changes) < self.batch_size:
+                # Targeted sync — only transfer the changed files
+                import tempfile, os as _os
+                rel_paths = [self._relative_path(p) for p in changes]
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                    f.write('\n'.join(rel_paths))
+                    files_from = f.name
+                success = self.rsync_wrapper.push(files_from=files_from)
+                _os.unlink(files_from)
+            else:
+                success = self.rsync_wrapper.push(dry_run=False, verbose=False)
 
             if success:
                 self.sync_count += 1
