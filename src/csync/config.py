@@ -117,22 +117,40 @@ class CsyncConfig:
                         self.exclude_patterns.append(pattern)
 
     def _load_gitignore_patterns(self) -> List[str]:
-        """Load patterns from .gitignore file if it exists."""
-        gitignore_path = Path(self.local_path) / ".gitignore"
-        if not gitignore_path.exists():
-            return []
+        """Load patterns from all .gitignore files found under local_path."""
+        root = Path(self.local_path)
+        patterns: List[str] = []
+        skip_dirs = {'.git', 'node_modules', '__pycache__', '.venv', 'venv'}
 
-        patterns = []
-        try:
-            with open(gitignore_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    # Skip empty lines and comments
-                    if line and not line.startswith("#"):
-                        patterns.append(line)
-        except Exception:
-            # If we can't read gitignore, just continue
-            pass
+        for dirpath, dirnames, filenames in os.walk(root):
+            # Prune directories we never want to descend into
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+
+            # Limit depth to 5 levels below root
+            rel_dir = Path(dirpath).relative_to(root)
+            if len(rel_dir.parts) > 5:
+                dirnames.clear()
+                continue
+
+            if '.gitignore' not in filenames:
+                continue
+
+            gitignore_path = Path(dirpath) / '.gitignore'
+            try:
+                with open(gitignore_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        # Prefix pattern with its relative directory so it is
+                        # valid when matched from the project root.
+                        if rel_dir == Path('.'):
+                            patterns.append(line)
+                        else:
+                            prefix = rel_dir.as_posix() + '/'
+                            patterns.append(prefix + line)
+            except Exception:
+                pass
 
         return patterns
 
