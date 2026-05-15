@@ -386,13 +386,31 @@ def start(
             "--foreground", "-f", help="Run in foreground instead of daemon mode"
         ),
     ] = False,
+    mode: Annotated[
+        Optional[str],
+        typer.Option(
+            "--mode",
+            help="Sync direction: 'push' (watch local, push to remote) or 'pull' (poll remote, pull to local). Overrides config.",
+        ),
+    ] = None,
 ) -> None:
     """
     🚀 Start background daemon to watch for changes and auto-sync.
 
-    The daemon will watch for file changes and automatically push them to the remote server.
+    In push mode (default), the daemon watches the local directory and pushes
+    changes to the remote. In pull mode, it polls the remote every sync_delay
+    seconds and pulls into the local directory.
     """
     config_obj = find_and_load_config(config)
+
+    if mode is not None:
+        if mode not in ("push", "pull"):
+            console.print(
+                f"❌ Invalid --mode {mode!r}; must be 'push' or 'pull'", style="red"
+            )
+            raise typer.Exit(2)
+        from dataclasses import replace as _dc_replace
+        config_obj = _dc_replace(config_obj, sync_mode=mode)
 
     try:
         from .daemon import start_daemon

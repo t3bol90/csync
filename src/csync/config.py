@@ -104,9 +104,17 @@ class CsyncConfig:
     exclude_patterns: Optional[List[str]] = None
     rsync_options: Optional[List[str]] = None
     respect_gitignore: bool = True
+    # Daemon direction: "push" watches local FS and pushes to remote;
+    # "pull" polls remote on sync_delay and pulls into local.
+    sync_mode: str = "push"
 
     def __post_init__(self):
         """Validate and normalize configuration after initialization."""
+        if self.sync_mode not in ("push", "pull"):
+            raise ValueError(
+                f"sync_mode must be 'push' or 'pull', got {self.sync_mode!r}"
+            )
+
         # Ensure local_path is absolute. On Windows, preserve MSYS/Git-Bash
         # style paths (e.g. /f/xxx) verbatim so rsync receives them unchanged.
         self.local_path = _abspath_preserving_msys(self.local_path)
@@ -218,6 +226,7 @@ class CsyncConfig:
                     if section.get("ssh_port")
                     else None,
                     "respect_gitignore": section.getboolean("respect_gitignore", True),
+                    "sync_mode": section.get("sync_mode", "push"),
                 }
 
                 # Parse lists from comma-separated strings
@@ -261,6 +270,7 @@ class CsyncConfig:
             "exclude_patterns": self.exclude_patterns,
             "rsync_options": self.rsync_options,
             "respect_gitignore": self.respect_gitignore,
+            "sync_mode": self.sync_mode,
         }
 
         # Remove None values

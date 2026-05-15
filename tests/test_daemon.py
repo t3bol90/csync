@@ -605,3 +605,75 @@ class TestPerformSyncRequeue:
 
         # phantom does not exist → must NOT be re-queued
         assert phantom not in daemon.pending_changes
+
+
+# ===========================================================================
+# Pull-mode daemon tests
+# ===========================================================================
+
+class TestPullMode:
+    """Tests for sync_mode='pull' branch."""
+
+    def test_perform_pull_invokes_rsync_pull_and_updates_stats(self):
+        daemon = make_daemon(sync_mode="pull")
+        mock_wrapper = MagicMock()
+        mock_wrapper.pull.return_value = True
+        daemon.rsync_wrapper = mock_wrapper
+
+        assert daemon.perform_pull() is True
+        mock_wrapper.pull.assert_called_once_with(dry_run=False, verbose=False)
+        assert daemon.sync_count == 1
+        assert daemon.last_sync_time > 0
+
+    def test_perform_pull_returns_false_on_rsync_failure(self):
+        daemon = make_daemon(sync_mode="pull")
+        mock_wrapper = MagicMock()
+        mock_wrapper.pull.return_value = False
+        daemon.rsync_wrapper = mock_wrapper
+
+        assert daemon.perform_pull() is False
+        assert daemon.sync_count == 0
+
+    def test_perform_pull_skips_when_lock_held(self):
+        daemon = make_daemon(sync_mode="pull")
+        # Hold the lock to simulate a concurrent sync in progress
+        daemon._perform_sync_lock.acquire()
+        try:
+            mock_wrapper = MagicMock()
+            daemon.rsync_wrapper = mock_wrapper
+            assert daemon.perform_pull() is False
+            mock_wrapper.pull.assert_not_called()
+        finally:
+            daemon._perform_sync_lock.release()
+
+    def test_sync_loop_pull_mode_calls_perform_pull(self):
+        daemon = make_daemon(sync_mode="pull")
+        daemon.sync_delay = 0.01
+        daemon.is_running = True
+
+        call_count = {"n": 0}
+
+        def fake_pull():
+            call_count["n"] += 1
+            if call_count["n"] >= 2:
+                daemon.is_running = False
+            return True
+
+        with patch.object(daemon, "perform_pull", side_effect=fake_pull) as mock_pull:
+            daemon.sync_loop()
+            assert mock_pull.call_count >= 2
+
+    def test_sync_loop_pull_mode_does_not_call_perform_sync(self):
+        """Pull mode must not run the push branch."""
+        daemon = make_daemon(sync_mode="pull")
+        daemon.sync_delay = 0.01
+        daemon.is_running = True
+
+        def stop_after_first(*_a, **_kw):
+            daemon.is_running = False
+            return True
+
+        with patch.object(daemon, "perform_pull", side_effect=stop_after_first), \
+             patch.object(daemon, "perform_sync") as mock_sync:
+            daemon.sync_loop()
+            mock_sync.assert_not_called()

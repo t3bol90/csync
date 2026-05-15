@@ -222,6 +222,36 @@ class CsyncDaemon:
 
         return False
 
+    def perform_pull(self) -> bool:
+        """Pull from remote into local. Called by the pull-mode sync loop."""
+        if not self._perform_sync_lock.acquire(blocking=False):
+            return False
+        try:
+            self.console.print("🔄 Pulling from remote...", style="blue")
+            start = time.perf_counter()
+            success = self.rsync_wrapper.pull(dry_run=False, verbose=False)
+            duration_ms = (time.perf_counter() - start) * 1000
+
+            if success:
+                self.sync_count += 1
+                self.last_sync_time = time.time()
+                self._last_sync_mono = time.monotonic()
+                self.last_sync_duration_ms = duration_ms
+                self.process_manager.update_daemon_stats(
+                    str(self.local_path), self.last_sync_time, self.sync_count
+                )
+                self.console.print(
+                    f"✅ Pull completed in {duration_ms:.0f}ms", style="green"
+                )
+            else:
+                self.console.print("❌ Pull failed", style="red")
+            return success
+        except Exception as e:
+            self.console.print(f"❌ Pull error: {e}", style="red")
+            return False
+        finally:
+            self._perform_sync_lock.release()
+
     def perform_sync(self) -> bool:
         """Perform synchronization."""
         if not self._perform_sync_lock.acquire(blocking=False):
@@ -316,8 +346,19 @@ class CsyncDaemon:
         """Main sync loop running in background thread."""
         while self.is_running:
             try:
-                # Compute how long to sleep: remaining debounce window or max interval.
-                # This ensures a single-file change syncs after ~100 ms, not 300 s.
+                if self.config.sync_mode == "pull":
+                    # Pull mode has no FS events to debounce — just poll every
+                    # sync_delay. _change_event is used as an interruptible sleep
+                    # so stop() can wake the thread immediately.
+                    self._change_event.wait(timeout=self.sync_delay)
+                    self._change_event.clear()
+                    if self.is_running:
+                        self.perform_pull()
+                    continue
+
+                # Push mode: debounce on first pending change, fall back to
+                # max_sync_interval idle heartbeat. Single-file change syncs
+                # after ~100 ms, not 300 s.
                 with self.sync_lock:
                     first = self.first_change_at
 
@@ -382,9 +423,11 @@ class CsyncDaemon:
             )
             return False
 
-        # Setup file watching
-        event_handler = CsyncFileHandler(self)
-        self.observer.schedule(event_handler, str(self.local_path), recursive=True)
+        # Setup file watching (push mode only — pull mode has no local events
+        # to react to and just polls the remote on sync_delay).
+        if self.config.sync_mode == "push":
+            event_handler = CsyncFileHandler(self)
+            self.observer.schedule(event_handler, str(self.local_path), recursive=True)
 
         # Create daemon info
         daemon_info = DaemonInfo(
@@ -442,22 +485,35 @@ class CsyncDaemon:
         # Set up signal handlers
         self.process_manager.setup_signal_handlers(self.signature)
 
-        # Start file observer
-        self.observer.start()
+        # Start file observer (only in push mode)
+        if self.config.sync_mode == "push":
+            self.observer.start()
         self.is_running = True
 
         # Start sync thread
         sync_thread = threading.Thread(target=self.sync_loop, daemon=True)
         sync_thread.start()
 
-        self.console.print(
-            f"👀 Watching for changes in {self.local_path}", style="cyan"
-        )
-        self.console.print(f"🎯 Syncing to {self.config.remote_target}", style="cyan")
+        if self.config.sync_mode == "pull":
+            self.console.print(
+                f"⏬ Pulling from {self.config.remote_target} every {self.sync_delay:.0f}s",
+                style="cyan",
+            )
+            self.console.print(f"📂 Into {self.local_path}", style="cyan")
+        else:
+            self.console.print(
+                f"👀 Watching for changes in {self.local_path}", style="cyan"
+            )
+            self.console.print(
+                f"🎯 Syncing to {self.config.remote_target}", style="cyan"
+            )
 
         # Perform initial sync
         self.console.print("🔄 Performing initial sync...", style="blue")
-        self.perform_sync()
+        if self.config.sync_mode == "pull":
+            self.perform_pull()
+        else:
+            self.perform_sync()
 
         if detach:
             # Redirect output to a per-project log file so multiple daemons
@@ -490,6 +546,8 @@ class CsyncDaemon:
     def stop(self) -> None:
         """Stop the daemon."""
         self.is_running = False
+        # Wake the sync_loop thread out of its wait so it sees is_running=False.
+        self._change_event.set()
 
         if self.observer.is_alive():
             self.observer.stop()

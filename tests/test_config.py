@@ -82,6 +82,18 @@ class TestCsyncConfigDataclass:
             )
         assert cfg.local_path == "/f/xxx/"
 
+    def test_sync_mode_defaults_to_push(self):
+        cfg = _make_config()
+        assert cfg.sync_mode == "push"
+
+    def test_sync_mode_accepts_pull(self):
+        cfg = _make_config(sync_mode="pull")
+        assert cfg.sync_mode == "pull"
+
+    def test_sync_mode_rejects_invalid_value(self):
+        with pytest.raises(ValueError, match="sync_mode"):
+            _make_config(sync_mode="sideways")
+
     def test_remote_path_ends_with_slash(self):
         cfg = _make_config(remote_path="/some/path")
         assert cfg.remote_path.endswith("/")
