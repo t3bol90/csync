@@ -12,23 +12,25 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 
-_MSYS_DRIVE_RE = re.compile(r"^/([a-zA-Z])(/.*)?$")
+_MSYS_DRIVE_RE = re.compile(r"^/[a-zA-Z](/|$)")
 
 
-def _normalize_msys_path(path: str) -> str:
-    """Translate MSYS/Git-Bash style paths (e.g. /f/xxx) to Windows form (F:/xxx).
+def _is_msys_path(path: str) -> bool:
+    """Return True if path looks like an MSYS/Git-Bash absolute path (e.g. /f/xxx).
 
-    No-op on non-Windows platforms or for paths that don't match the pattern.
-    Without this, os.path.abspath on Windows treats /f/xxx as drive-relative
-    and prepends the current drive (e.g. F:/f/xxx).
+    These paths are already absolute in the MSYS world and must be passed
+    through to rsync verbatim. Running os.path.abspath on them under Windows
+    Python would mangle them into <current-drive>:/f/xxx.
     """
-    if os.name != "nt":
-        return path
-    m = _MSYS_DRIVE_RE.match(path)
-    if not m:
-        return path
-    drive, rest = m.group(1).upper(), m.group(2) or "/"
-    return f"{drive}:{rest}"
+    return os.name == "nt" and bool(_MSYS_DRIVE_RE.match(path))
+
+
+def _abspath_preserving_msys(path: str) -> str:
+    """abspath that leaves MSYS-style paths (e.g. /f/xxx) untouched on Windows."""
+    expanded = os.path.expanduser(path)
+    if _is_msys_path(expanded):
+        return expanded
+    return os.path.abspath(expanded)
 
 GLOBAL_CONFIG_DIR = Path.home() / '.config' / 'csync'
 GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / 'config.cfg'
@@ -105,10 +107,9 @@ class CsyncConfig:
 
     def __post_init__(self):
         """Validate and normalize configuration after initialization."""
-        # Ensure local_path is absolute
-        self.local_path = os.path.abspath(
-            os.path.expanduser(_normalize_msys_path(self.local_path))
-        )
+        # Ensure local_path is absolute. On Windows, preserve MSYS/Git-Bash
+        # style paths (e.g. /f/xxx) verbatim so rsync receives them unchanged.
+        self.local_path = _abspath_preserving_msys(self.local_path)
 
         # Ensure local_path ends with /
         if not self.local_path.endswith("/"):

@@ -12,7 +12,8 @@ import yaml
 
 from csync.config import (
     CsyncConfig,
-    _normalize_msys_path,
+    _abspath_preserving_msys,
+    _is_msys_path,
     find_config_file,
     load_global_defaults,
     save_global_defaults,
@@ -47,22 +48,39 @@ class TestCsyncConfigDataclass:
         cfg = _make_config(local_path=".")
         assert cfg.local_path.endswith("/")
 
-    def test_normalize_msys_path_noop_on_posix(self):
-        # On non-Windows, MSYS-style paths must be left untouched.
+    def test_is_msys_path_only_on_windows(self):
         with patch("csync.config.os.name", "posix"):
-            assert _normalize_msys_path("/f/xxx") == "/f/xxx"
-            assert _normalize_msys_path("/home/user") == "/home/user"
-
-    def test_normalize_msys_path_translates_on_windows(self):
+            assert _is_msys_path("/f/xxx") is False
+            assert _is_msys_path("/c") is False
         with patch("csync.config.os.name", "nt"):
-            assert _normalize_msys_path("/f/xxx") == "F:/xxx"
-            assert _normalize_msys_path("/c/Users/me") == "C:/Users/me"
-            assert _normalize_msys_path("/f") == "F:/"
-            # Already-Windows paths are unchanged.
-            assert _normalize_msys_path("F:/xxx") == "F:/xxx"
-            assert _normalize_msys_path("C:\\Users") == "C:\\Users"
-            # Non-drive POSIX paths (no single-letter segment) are unchanged.
-            assert _normalize_msys_path("/foo/bar") == "/foo/bar"
+            assert _is_msys_path("/f/xxx") is True
+            assert _is_msys_path("/c/Users/me") is True
+            assert _is_msys_path("/f") is True
+            # Not MSYS-style: multi-char segment or Windows drive form.
+            assert _is_msys_path("/foo/bar") is False
+            assert _is_msys_path("F:/xxx") is False
+            assert _is_msys_path("C:\\Users") is False
+
+    def test_abspath_preserves_msys_on_windows(self):
+        # On Windows, MSYS paths pass through verbatim so rsync gets /f/xxx.
+        with patch("csync.config.os.name", "nt"):
+            assert _abspath_preserving_msys("/f/xxx") == "/f/xxx"
+            assert _abspath_preserving_msys("/c/Users/me") == "/c/Users/me"
+
+    def test_abspath_resolves_normal_paths(self):
+        # Non-MSYS paths still get absolutized normally.
+        result = _abspath_preserving_msys(".")
+        assert Path(result).is_absolute()
+
+    def test_config_preserves_msys_local_path_on_windows(self):
+        with patch("csync.config.os.name", "nt"):
+            cfg = CsyncConfig(
+                local_path="/f/xxx",
+                remote_host="example.com",
+                remote_path="/remote/",
+                respect_gitignore=False,
+            )
+        assert cfg.local_path == "/f/xxx/"
 
     def test_remote_path_ends_with_slash(self):
         cfg = _make_config(remote_path="/some/path")

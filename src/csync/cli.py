@@ -425,8 +425,8 @@ def stop(
     """
     # Determine which daemon to stop
     if local_path:
-        from .config import _normalize_msys_path
-        target_path = os.path.abspath(_normalize_msys_path(local_path))
+        from .config import _abspath_preserving_msys
+        target_path = _abspath_preserving_msys(local_path)
     elif config:
         config_obj = find_and_load_config(config)
         target_path = config_obj.local_path
