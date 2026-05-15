@@ -12,6 +12,7 @@ import yaml
 
 from csync.config import (
     CsyncConfig,
+    _normalize_msys_path,
     find_config_file,
     load_global_defaults,
     save_global_defaults,
@@ -45,6 +46,23 @@ class TestCsyncConfigDataclass:
     def test_local_path_ends_with_slash(self):
         cfg = _make_config(local_path=".")
         assert cfg.local_path.endswith("/")
+
+    def test_normalize_msys_path_noop_on_posix(self):
+        # On non-Windows, MSYS-style paths must be left untouched.
+        with patch("csync.config.os.name", "posix"):
+            assert _normalize_msys_path("/f/xxx") == "/f/xxx"
+            assert _normalize_msys_path("/home/user") == "/home/user"
+
+    def test_normalize_msys_path_translates_on_windows(self):
+        with patch("csync.config.os.name", "nt"):
+            assert _normalize_msys_path("/f/xxx") == "F:/xxx"
+            assert _normalize_msys_path("/c/Users/me") == "C:/Users/me"
+            assert _normalize_msys_path("/f") == "F:/"
+            # Already-Windows paths are unchanged.
+            assert _normalize_msys_path("F:/xxx") == "F:/xxx"
+            assert _normalize_msys_path("C:\\Users") == "C:\\Users"
+            # Non-drive POSIX paths (no single-letter segment) are unchanged.
+            assert _normalize_msys_path("/foo/bar") == "/foo/bar"
 
     def test_remote_path_ends_with_slash(self):
         cfg = _make_config(remote_path="/some/path")

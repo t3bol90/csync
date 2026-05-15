@@ -4,12 +4,31 @@ Handles reading and parsing .csync.cfg files.
 """
 
 import os
+import re
 import json
 import yaml
 import configparser
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
+
+_MSYS_DRIVE_RE = re.compile(r"^/([a-zA-Z])(/.*)?$")
+
+
+def _normalize_msys_path(path: str) -> str:
+    """Translate MSYS/Git-Bash style paths (e.g. /f/xxx) to Windows form (F:/xxx).
+
+    No-op on non-Windows platforms or for paths that don't match the pattern.
+    Without this, os.path.abspath on Windows treats /f/xxx as drive-relative
+    and prepends the current drive (e.g. F:/f/xxx).
+    """
+    if os.name != "nt":
+        return path
+    m = _MSYS_DRIVE_RE.match(path)
+    if not m:
+        return path
+    drive, rest = m.group(1).upper(), m.group(2) or "/"
+    return f"{drive}:{rest}"
 
 GLOBAL_CONFIG_DIR = Path.home() / '.config' / 'csync'
 GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / 'config.cfg'
@@ -87,7 +106,9 @@ class CsyncConfig:
     def __post_init__(self):
         """Validate and normalize configuration after initialization."""
         # Ensure local_path is absolute
-        self.local_path = os.path.abspath(os.path.expanduser(self.local_path))
+        self.local_path = os.path.abspath(
+            os.path.expanduser(_normalize_msys_path(self.local_path))
+        )
 
         # Ensure local_path ends with /
         if not self.local_path.endswith("/"):
