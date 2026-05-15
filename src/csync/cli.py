@@ -67,8 +67,8 @@ def find_and_load_config(config_path: Optional[str] = None) -> CsyncConfig:
             )
             console.print("\n[bold]Example:[/bold]")
             gd = load_global_defaults()
-            example_host = gd.get("remote_host", "your-server.com")
-            example_user = gd.get("ssh_user", "your-username")
+            example_host = gd.get("remote_host") or "your-server.com"
+            example_user = gd.get("ssh_user") or "your-username"
             example_panel = Panel(
                 f"""[cyan][csync][/cyan]
 [yellow]local_path[/yellow] = .
@@ -252,17 +252,21 @@ def init_config(
             console.print(f"⚠️ Smart analysis failed: {e}", style="yellow")
             console.print("Using default exclude patterns", style="yellow")
 
-    # Merge global defaults so users don't have to retype them every project
+    # Merge global defaults so users don't have to retype them every project.
+    # Fall back to clearly-bogus placeholder strings (not None) so that every
+    # field a user typically needs to edit shows up in the generated config —
+    # an empty/missing key gives users nothing to spot and replace.
     gd = load_global_defaults()
     sample_config = CsyncConfig(
         local_path=".",
-        remote_host=gd.get("remote_host", "your-server.com"),
+        remote_host=gd.get("remote_host") or "your-server.com",
         remote_path=gd.get("remote_path") or f'~/projects/{Path.cwd().name}',
-        ssh_user=gd.get("ssh_user") or None,
+        ssh_user=gd.get("ssh_user") or "your-username",
         ssh_port=gd.get("ssh_port"),
         rsync_options=["-av", "--progress"],
         exclude_patterns=default_excludes,
         respect_gitignore=True,
+        sync_mode="push",
     )
 
     # Save config and get content for display
